@@ -1,0 +1,10 @@
+rules_version = '2';
+
+// Sermon notes: each signed-in user may only read/write their own documents.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/data/{docId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

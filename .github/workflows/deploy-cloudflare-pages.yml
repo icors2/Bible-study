@@ -1,0 +1,49 @@
+# Builds Flutter web and uploads to Cloudflare Pages (free tier).
+#
+# Required GitHub repository secrets:
+#   CLOUDFLARE_API_TOKEN          — Dashboard → My Profile → API Tokens
+#                                   (template: Edit Cloudflare Workers; add Pages → Edit)
+#   CLOUDFLARE_ACCOUNT_ID         — Dashboard overview → Account ID
+#   CLOUDFLARE_PAGES_PROJECT_NAME — Name of your Pages project (e.g. sermon-notes-web)
+#
+# Create the empty Pages project once (Dashboard → Workers & Pages → Create → Pages),
+# or: npx wrangler pages project create YOUR_NAME --production-branch=main
+
+name: Deploy Flutter web to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.24.5"
+
+      - name: Flutter pub get
+        working-directory: sermon_notes
+        run: flutter pub get
+
+      - name: Build web
+        working-directory: sermon_notes
+        run: flutter build web --release
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy sermon_notes/build/web --project-name=${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}

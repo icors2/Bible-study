@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,12 +8,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/sermon_models.dart';
 import '../services/bible_service.dart';
 import '../services/outline_fetch_service.dart';
+import '../services/sermon_cloud_sync.dart';
 import '../widgets/scripture_link_chips.dart';
 
 class SermonNotesScreen extends StatefulWidget {
-  const SermonNotesScreen({super.key, required this.bible});
+  const SermonNotesScreen({
+    super.key,
+    required this.bible,
+    required this.cloudSync,
+  });
 
   final BibleService bible;
+  final SermonCloudSync cloudSync;
 
   @override
   State<SermonNotesScreen> createState() => _SermonNotesScreenState();
@@ -31,6 +38,7 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
   String? _error;
 
   Timer? _saveDebounce;
+  StreamSubscription<User?>? _authSub;
 
   static const _prefsKey = 'sermon_draft_v1';
   static const _defaultOutlineUrl = 'https://calvaryeauclaire.org/notes';
@@ -38,6 +46,11 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
   @override
   void initState() {
     super.initState();
+    _authSub = widget.cloudSync.authStateChanges().listen((user) {
+      if (user != null) {
+        _pullRemoteDraftPreferCloud();
+      }
+    });
     _restoreDraft();
   }
 
@@ -51,6 +64,7 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
           _urlCtrl.text = _defaultOutlineUrl;
         }
       });
+      await _pullRemoteDraftPreferCloud();
       return;
     }
     _urlCtrl.text = (draft.sourceUrl != null &&
@@ -61,6 +75,66 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
     _sections = draft.sections;
     _rebindControllers();
     setState(() {});
+    await _pullRemoteDraftPreferCloud();
+  }
+
+  Future<void> _pullRemoteDraftPreferCloud() async {
+    final cloud = widget.cloudSync;
+    if (!cloud.isFirebaseReady || cloud.currentUser == null) {
+      return;
+    }
+    try {
+      final remote = await cloud.loadRemoteDraft();
+      if (!mounted) return;
+      if (remote != null) {
+        setState(() {
+          _urlCtrl.text = (remote.sourceUrl != null &&
+                  remote.sourceUrl!.trim().isNotEmpty)
+              ? remote.sourceUrl!.trim()
+              : _defaultOutlineUrl;
+          _pasteCtrl.text = remote.pastedPlainText ?? '';
+          _sections = remote.sections;
+        });
+        _rebindControllers();
+        await _persistLocal();
+      } else {
+        await cloud.saveRemoteDraft(_currentDraft());
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('Could not sync from cloud: $e')),
+      );
+    }
+  }
+
+  SermonDraft _currentDraft() {
+    for (final s in _sections) {
+      s.notes = _notesControllers[s.id]?.text ?? s.notes;
+    }
+    return SermonDraft(
+      sourceUrl: _urlCtrl.text.trim().isEmpty ? null : _urlCtrl.text.trim(),
+      pastedPlainText:
+          _pasteCtrl.text.trim().isEmpty ? null : _pasteCtrl.text.trim(),
+      sections: _sections,
+    );
+  }
+
+  Future<void> _persistLocal() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsKey, _currentDraft().serialize());
+  }
+
+  Future<void> _maybePushCloud() async {
+    final cloud = widget.cloudSync;
+    if (!cloud.isFirebaseReady || cloud.currentUser == null) {
+      return;
+    }
+    try {
+      await cloud.saveRemoteDraft(_currentDraft());
+    } catch (e) {
+      debugPrint('Cloud save failed: $e');
+    }
   }
 
   void _rebindControllers() {
@@ -97,22 +171,16 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
   }
 
   Future<void> _persistDraft() async {
-    for (final s in _sections) {
-      s.notes = _notesControllers[s.id]?.text ?? s.notes;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    final draft = SermonDraft(
-      sourceUrl: _urlCtrl.text.trim().isEmpty ? null : _urlCtrl.text.trim(),
-      pastedPlainText:
-          _pasteCtrl.text.trim().isEmpty ? null : _pasteCtrl.text.trim(),
-      sections: _sections,
-    );
-    await prefs.setString(_prefsKey, draft.serialize());
+    await _persistLocal();
+    await _maybePushCloud();
   }
 
   Future<void> _clearDraft() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefsKey);
+    try {
+      await widget.cloudSync.clearRemoteDraft();
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _sections = [];
@@ -126,6 +194,7 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
   @override
   void dispose() {
     _saveDebounce?.cancel();
+    _authSub?.cancel();
     _urlCtrl.dispose();
     _pasteCtrl.dispose();
     for (final c in _blankControllers.values) {
