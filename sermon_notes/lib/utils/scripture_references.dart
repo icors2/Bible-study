@@ -82,7 +82,7 @@ class ScriptureReferences {
     return RegExp(
       r'\b((?:[1-3]\s+)?(?:' +
           escaped +
-          r'))\s+(\d+)\s*:\s*(\d+)(?:\s*-\s*(\d+))?\b',
+          r'))\s+(\d+)\s*:\s*(\d+)(?:\s*[-–—]\s*(\d+))?\b',
       caseSensitive: false,
     );
   }();

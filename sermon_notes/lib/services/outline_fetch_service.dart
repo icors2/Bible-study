@@ -62,7 +62,8 @@ class OutlineFetchService {
 
   /// Converts pasted or fetched HTML / plain text into outline sections.
   List<SermonSection> buildSectionsFromPlainText(String plain) {
-    final lines = plain
+    final normalized = splitMergedHeadingLine(plain);
+    final lines = normalized
         .split(RegExp(r'\r?\n'))
         .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
@@ -102,6 +103,16 @@ class OutlineFetchService {
     return _collapseWhitespace(body.text);
   }
 
+  /// Inserts a line break when a lowercase letter is immediately followed by a
+  /// capitalized word and chapter number (e.g. Zoho Sites often emits
+  /// `PrayMatthew 6:5` without a space).
+  static String splitMergedHeadingLine(String plain) {
+    return plain.replaceAllMapped(
+      RegExp(r'([a-z])([A-Z][a-zA-Z]{2,}\s+\d)'),
+      (m) => '${m[1]}\n${m[2]}',
+    );
+  }
+
   /// Plain text or HTML pasted by the user.
   static String plainFromUserPaste(String raw) {
     final t = raw.trim();
@@ -132,29 +143,61 @@ class OutlineFetchException implements Exception {
   String toString() => message;
 }
 
-final _outlineLineStart = RegExp(
-  r'^\s*(?:\d{1,3}|[a-z]|[ivxlcdm]{1,8})[\.\)]\s',
+/// Major outline points like `1.` / `2)` (optional space after the delimiter).
+/// Sub-points such as `a.` / `i.` stay inside the same section so fill-ins and
+/// notes stay grouped (e.g. Calvary Baptist sermon outlines).
+final _majorSectionStart = RegExp(
+  r'^\s*\d{1,3}[\.\)]\s*',
   caseSensitive: false,
 );
 
 List<String> _groupOutlineLines(List<String> lines) {
   final blocks = <String>[];
   final buf = StringBuffer();
+  final preamble = StringBuffer();
+  var seenMajor = false;
 
-  void flush() {
+  void flushBuf() {
     final s = buf.toString().trim();
-    if (s.isNotEmpty) blocks.add(s);
+    if (s.isNotEmpty) {
+      blocks.add(s);
+    }
     buf.clear();
   }
 
   for (final line in lines) {
-    if (_outlineLineStart.hasMatch(line) && buf.isNotEmpty) {
-      flush();
+    if (_majorSectionStart.hasMatch(line)) {
+      if (!seenMajor) {
+        seenMajor = true;
+        final head = preamble.toString().trim();
+        if (head.isNotEmpty) {
+          buf.writeln(head);
+        }
+        preamble.clear();
+        buf.write(line);
+      } else {
+        flushBuf();
+        buf.write(line);
+      }
+    } else if (!seenMajor) {
+      if (preamble.isNotEmpty) {
+        preamble.writeln();
+      }
+      preamble.write(line);
+    } else {
+      buf.writeln();
+      buf.write(line);
     }
-    if (buf.isNotEmpty) buf.writeln();
-    buf.write(line);
   }
-  flush();
+
+  if (!seenMajor) {
+    final only = preamble.toString().trim();
+    if (only.isNotEmpty) {
+      blocks.add(only);
+    }
+  } else {
+    flushBuf();
+  }
 
   if (blocks.length <= 1 && lines.length > 8) {
     return lines;

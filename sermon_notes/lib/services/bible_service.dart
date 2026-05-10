@@ -116,7 +116,7 @@ class BibleService {
   }
 
   String _toQuery(String ref) {
-    final trimmed = ref.trim();
+    var trimmed = ref.trim().replaceAll(RegExp(r'[–—]'), '-');
     if (trimmed.isEmpty) return trimmed;
     return trimmed
         .replaceAll(RegExp(r'\s+'), '+')

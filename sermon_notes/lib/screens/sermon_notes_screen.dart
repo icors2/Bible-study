@@ -33,6 +33,7 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
   Timer? _saveDebounce;
 
   static const _prefsKey = 'sermon_draft_v1';
+  static const _defaultOutlineUrl = 'https://calvaryeauclaire.org/notes';
 
   @override
   void initState() {
@@ -43,10 +44,19 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
   Future<void> _restoreDraft() async {
     final prefs = await SharedPreferences.getInstance();
     final draft = SermonDraft.tryParse(prefs.getString(_prefsKey));
-    if (!mounted || draft == null) {
+    if (!mounted) return;
+    if (draft == null) {
+      setState(() {
+        if (_urlCtrl.text.isEmpty) {
+          _urlCtrl.text = _defaultOutlineUrl;
+        }
+      });
       return;
     }
-    _urlCtrl.text = draft.sourceUrl ?? '';
+    _urlCtrl.text = (draft.sourceUrl != null &&
+            draft.sourceUrl!.trim().isNotEmpty)
+        ? draft.sourceUrl!.trim()
+        : _defaultOutlineUrl;
     _pasteCtrl.text = draft.pastedPlainText ?? '';
     _sections = draft.sections;
     _rebindControllers();
@@ -107,7 +117,7 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
     setState(() {
       _sections = [];
       _error = null;
-      _urlCtrl.clear();
+      _urlCtrl.text = _defaultOutlineUrl;
       _pasteCtrl.clear();
     });
     _rebindControllers();
@@ -209,7 +219,7 @@ class _SermonNotesScreenState extends State<SermonNotesScreen> {
                   autocorrect: false,
                   decoration: const InputDecoration(
                     labelText: 'Outline URL',
-                    hintText: 'https://…',
+                    hintText: _defaultOutlineUrl,
                     border: OutlineInputBorder(),
                   ),
                 ),
